@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 
 	"github.com/biogo/biogo/alphabet"
 	"github.com/biogo/biogo/io/seqio"
@@ -93,6 +94,21 @@ func main() {
 		t.Alpha = alphabet.DNA
 		sc := seqio.NewScanner(fasta.NewReader(f, t))
 
+		contigs := make(chan *linear.Seq, runtime.NumCPU())
+		done := make(chan bool)
+
+		go func() {
+			for {
+				contig, more := <-contigs
+				if more {
+					AnalyseContig(contig)
+				} else {
+					done <- true
+					return
+				}
+			}
+		}()
+
 		for sc.Next() {
 			s := sc.Seq().(*linear.Seq)
 			it := s.Alphabet().LetterIndex()
@@ -111,7 +127,7 @@ func main() {
 						if ncounter != i {
 							contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
 							contig.Offset = baseStart
-							AnalyseContig(contig)
+							contigs <- contig
 						}
 						baseStart = i
 						ncounter = 0
@@ -123,8 +139,11 @@ func main() {
 			i := s.Seq.Len()
 			contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
 			contig.Offset = baseStart
-			AnalyseContig(contig)
+			contigs <- contig
 		}
+
+		close(contigs)
+		<-done
 		return nil
 	}
 	app.Run(os.Args)
