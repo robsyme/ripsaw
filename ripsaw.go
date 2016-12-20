@@ -92,13 +92,14 @@ func main() {
 		t := &linear.Seq{}
 		t.Alpha = alphabet.DNA
 		sc := seqio.NewScanner(fasta.NewReader(f, t))
+
 		for sc.Next() {
 			s := sc.Seq().(*linear.Seq)
-
 			it := s.Alphabet().LetterIndex()
 			var baseStart, ncounter int
 			baseStart = 0
 			ncounter = 0
+
 			for i, nuc := range s.Seq {
 				// Are we in a region of 'n's?
 				if it[nuc] < 0 {
@@ -110,7 +111,7 @@ func main() {
 						if ncounter != i {
 							contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
 							contig.Offset = baseStart
-							AnalyseContig(contig, 0)
+							AnalyseContig(contig)
 						}
 						baseStart = i
 						ncounter = 0
@@ -119,11 +120,10 @@ func main() {
 					}
 				}
 			}
-
 			i := s.Seq.Len()
 			contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
 			contig.Offset = baseStart
-			AnalyseContig(contig, 0)
+			AnalyseContig(contig)
 		}
 		return nil
 	}
@@ -136,7 +136,8 @@ func check(e error) {
 	}
 }
 
-func AnalyseContig(contig *linear.Seq, depth int) {
+// AnalyseContig segments the contig into regions of equivalent dinucleotide distribution
+func AnalyseContig(contig *linear.Seq) {
 	it := contig.Alphabet().LetterIndex()
 	encoded := make([]int, contig.Len())
 	// Switch from base to integer value:
@@ -178,15 +179,14 @@ func AnalyseContig(contig *linear.Seq, depth int) {
 
 	if lContig.Len() > 5000 && rContig.Len() > 5000 {
 		lContig.Offset = contig.Offset
-		AnalyseContig(lContig, depth+1)
+		AnalyseContig(lContig)
 		rContig.Offset = contig.Offset + maxEntropyIndex
-		AnalyseContig(rContig, depth+1)
+		AnalyseContig(rContig)
 	} else {
-		fmt.Printf("%s\t%d\t%d\td_%02d\t%.2f\t%.2f",
+		fmt.Printf("%s\t%d\t%d\tsegment\t%.2f\t%.2f",
 			contig.Name(),
 			contig.Annotation.Offset,
 			contig.Annotation.Offset+contig.Len(),
-			depth,
 			lCounts.RipIndex()*50,
 			lCounts.GC())
 		for _, prob := range lCounts.Distribution() {
