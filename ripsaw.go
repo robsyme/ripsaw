@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/biogo/biogo/alphabet"
 	"github.com/biogo/biogo/io/seqio"
@@ -94,21 +95,23 @@ func main() {
 		check(err)
 
 		contigChan := make(chan *linear.Seq)
+		go getContigs(f, contigChan)
+
 		results := make(chan string)
 		var wg sync.WaitGroup
 		for w := 1; w <= runtime.NumCPU()-1; w++ {
-			wg.Add(1)
 			go func(id int, contigs <-chan *linear.Seq, results chan<- string) {
-				defer wg.Done()
 				for contig := range contigs {
+					wg.Add(1)
+					fmt.Fprintf(os.Stderr, "Analysing new contig (%s)\n", contig.Name())
 					AnalyseContig(contig, results)
+					wg.Done()
 				}
-				close(results)
 			}(w, contigChan, results)
 		}
 
-		go getContigs(f, contigChan)
 		go func() {
+			time.Sleep(time.Second)
 			wg.Wait()
 			close(results)
 		}()
@@ -158,7 +161,6 @@ func getContigs(f io.Reader, contigs chan *linear.Seq) {
 		contigs <- contig
 	}
 	close(contigs)
-	fmt.Println("All done!")
 }
 
 func check(e error) {
