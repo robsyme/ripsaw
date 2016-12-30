@@ -103,7 +103,6 @@ func main() {
 			go func(id int, contigs <-chan *linear.Seq, results chan<- string) {
 				for contig := range contigs {
 					wg.Add(1)
-					fmt.Fprintf(os.Stderr, "Analysing new contig (%s)\n", contig.Name())
 					AnalyseContig(contig, results)
 					wg.Done()
 				}
@@ -211,6 +210,7 @@ func AnalyseContig(contig *linear.Seq, results chan<- string) {
 	rContig := linear.NewSeq(contig.Name(), contig.Seq[maxEntropyIndex:], alphabet.DNA)
 
 	if lContig.Len() > 5000 && rContig.Len() > 5000 {
+		fmt.Fprintf(os.Stderr, "%s\t%d\t%.5f\n", contig.Name(), maxEntropyIndex, maxEntropy)
 		lContig.Offset = contig.Offset
 		AnalyseContig(lContig, results)
 		rContig.Offset = contig.Offset + maxEntropyIndex
