@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"runtime"
+	"sync"
 
 	"github.com/biogo/biogo/alphabet"
 	"github.com/biogo/biogo/io/seqio"
@@ -90,63 +93,72 @@ func main() {
 		f, err := os.Open(filename)
 		check(err)
 
-		t := &linear.Seq{}
-		t.Alpha = alphabet.DNA
-		sc := seqio.NewScanner(fasta.NewReader(f, t))
-
-		contigs := make(chan *linear.Seq, runtime.NumCPU())
-		done := make(chan bool)
-
-		go func() {
-			for {
-				contig, more := <-contigs
-				if more {
-					AnalyseContig(contig)
-				} else {
-					done <- true
-					return
+		contigChan := make(chan *linear.Seq)
+		results := make(chan string)
+		var wg sync.WaitGroup
+		for w := 1; w <= runtime.NumCPU()-1; w++ {
+			wg.Add(1)
+			go func(id int, contigs <-chan *linear.Seq, results chan<- string) {
+				defer wg.Done()
+				for contig := range contigs {
+					AnalyseContig(contig, results)
 				}
-			}
-		}()
-
-		for sc.Next() {
-			s := sc.Seq().(*linear.Seq)
-			it := s.Alphabet().LetterIndex()
-			var baseStart, ncounter int
-			baseStart = 0
-			ncounter = 0
-
-			for i, nuc := range s.Seq {
-				// Are we in a region of 'n's?
-				if it[nuc] < 0 {
-					// If so, increment the count.
-					ncounter++
-				} else {
-					// We're in good sequence
-					if ncounter > 5 {
-						if ncounter != i {
-							contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
-							contig.Offset = baseStart
-							contigs <- contig
-						}
-						baseStart = i
-						ncounter = 0
-					} else {
-						ncounter = 0
-					}
-				}
-			}
-			i := s.Seq.Len()
-			contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
-			contig.Offset = baseStart
-			contigs <- contig
+				close(results)
+			}(w, contigChan, results)
 		}
 
-		close(contigs)
-		<-done
+		go getContigs(f, contigChan)
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		for result := range results {
+			fmt.Println(result)
+		}
 		return nil
 	}
 	app.Run(os.Args)
+}
+
+func getContigs(f io.Reader, contigs chan *linear.Seq) {
+	t := &linear.Seq{}
+	t.Alpha = alphabet.DNA
+	sc := seqio.NewScanner(fasta.NewReader(f, t))
+	for sc.Next() {
+		s := sc.Seq().(*linear.Seq)
+		it := s.Alphabet().LetterIndex()
+		var baseStart, ncounter int
+		baseStart = 0
+		ncounter = 0
+
+		for i, nuc := range s.Seq {
+			// Are we in a region of 'n's?
+			if it[nuc] < 0 {
+				// If so, increment the count.
+				ncounter++
+			} else {
+				// We're in good sequence
+				if ncounter > 5 {
+					if ncounter != i {
+						contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
+						contig.Offset = baseStart
+						contigs <- contig
+					}
+					baseStart = i
+					ncounter = 0
+				} else {
+					ncounter = 0
+				}
+			}
+		}
+		i := s.Seq.Len()
+		contig := linear.NewSeq(s.Name(), s.Seq[baseStart:i-ncounter], alphabet.DNA)
+		contig.Offset = baseStart
+		contigs <- contig
+	}
+	close(contigs)
+	fmt.Println("All done!")
 }
 
 func check(e error) {
@@ -156,7 +168,7 @@ func check(e error) {
 }
 
 // AnalyseContig segments the contig into regions of equivalent dinucleotide distribution
-func AnalyseContig(contig *linear.Seq) {
+func AnalyseContig(contig *linear.Seq, results chan<- string) {
 	it := contig.Alphabet().LetterIndex()
 	encoded := make([]int, contig.Len())
 	// Switch from base to integer value:
@@ -198,19 +210,20 @@ func AnalyseContig(contig *linear.Seq) {
 
 	if lContig.Len() > 5000 && rContig.Len() > 5000 {
 		lContig.Offset = contig.Offset
-		AnalyseContig(lContig)
+		AnalyseContig(lContig, results)
 		rContig.Offset = contig.Offset + maxEntropyIndex
-		AnalyseContig(rContig)
+		AnalyseContig(rContig, results)
 	} else {
-		fmt.Printf("%s\t%d\t%d\tsegment\t%.2f\t%.2f",
+		var buffer bytes.Buffer
+		fmt.Fprintf(&buffer, "%s\t%d\t%d\tsegment\t%.2f\t%.2f",
 			contig.Name(),
 			contig.Annotation.Offset,
 			contig.Annotation.Offset+contig.Len(),
 			lCounts.RipIndex()*50,
 			lCounts.GC())
 		for _, prob := range lCounts.Distribution() {
-			fmt.Printf("\t%.4f", prob)
+			fmt.Fprintf(&buffer, "\t%.4f", prob)
 		}
-		fmt.Println()
+		results <- buffer.String()
 	}
 }
