@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,10 @@ import (
 
 type dinucCount [5][5]int
 type dinucDistr [14]float64
+
+var typeA = dinucDistr{0.1704377, 0.06633411, 0.1541075, 0.1709693, 0.02717819, 0.01615981, 0.02071386, 0.07266667, 0.30141589, 0, 0, 0, 0, 0}
+var typeB = dinucDistr{0.1041197, 0.10521961, 0.1171455, 0.1026425, 0.13173368, 0.11020999, 0.12192831, 0.13965545, 0.06733974, 0, 0, 0, 0, 0}
+var typeC = dinucDistr{0.22606667, 0.08146667, 0.09600000, 0.18870000, 0.07200000, 0.04806667, 0.03183333, 0.03980000, 0.21600000, 0, 0, 0, 0, 0}
 
 func (c *dinucCount) GC() float64 {
 	var gc, at int
@@ -68,6 +73,15 @@ func (c *dinucCount) Distribution() *dinucDistr {
 	return (&p)
 }
 
+func (p *dinucDistr) EuclideanDistance(q dinucDistr) float64 {
+	var sum, dist float64
+	for i, pprob := range p {
+		dist = pprob - q[i]
+		sum += dist * dist
+	}
+	return math.Sqrt(sum)
+}
+
 func (p *dinucDistr) ShannonEntropy() (entropy float64) {
 	entropy = 0
 	for _, prob := range p {
@@ -76,6 +90,14 @@ func (p *dinucDistr) ShannonEntropy() (entropy float64) {
 		}
 	}
 	return (entropy)
+}
+
+func (p *dinucDistr) String() []string {
+	result := make([]string, 14)
+	for i, v := range p {
+		result[i] = fmt.Sprintf("%.4f", v)
+	}
+	return (result)
 }
 
 func main() {
@@ -209,23 +231,43 @@ func AnalyseContig(contig *linear.Seq, results chan<- string) {
 	lContig := linear.NewSeq(contig.Name(), contig.Seq[0:maxEntropyIndex], alphabet.DNA)
 	rContig := linear.NewSeq(contig.Name(), contig.Seq[maxEntropyIndex:], alphabet.DNA)
 
-	if lContig.Len() > 5000 && rContig.Len() > 5000 {
-		fmt.Fprintf(os.Stderr, "%s\t%d\t%.5f\n", contig.Name(), maxEntropyIndex, maxEntropy)
+	if lContig.Len() > 1000 && rContig.Len() > 1000 {
 		lContig.Offset = contig.Offset
 		AnalyseContig(lContig, results)
 		rContig.Offset = contig.Offset + maxEntropyIndex
 		AnalyseContig(rContig, results)
 	} else {
 		var buffer bytes.Buffer
-		fmt.Fprintf(&buffer, "%s\t%d\t%d\tsegment\t%.2f\t%.2f",
+		distanceA := lCounts.Distribution().EuclideanDistance(typeA)
+		distanceB := lCounts.Distribution().EuclideanDistance(typeB)
+		distanceC := lCounts.Distribution().EuclideanDistance(typeC)
+		var contigType string
+		contigType = "A"
+		if distanceB < distanceA {
+			if distanceC < distanceB {
+				contigType = "C"
+			} else {
+				contigType = "B"
+			}
+		} else if distanceC < distanceA {
+			contigType = "C"
+		}
+		fmt.Fprintf(&buffer,
+			"%s\t%d\t%d\t%s\t%.2f\t%s",
 			contig.Name(),
 			contig.Annotation.Offset,
 			contig.Annotation.Offset+contig.Len(),
-			lCounts.RipIndex()*50,
-			lCounts.GC())
-		for _, prob := range lCounts.Distribution() {
-			fmt.Fprintf(&buffer, "\t%.4f", prob)
-		}
+			contigType,
+			lCounts.GC(),
+			strings.Join(lCounts.Distribution().String(), "\t"),
+		)
+		// fmt.Fprintf(&buffer, "%s\tripsaw\t%s\t%d\t%d\t%.2f\t.\t.",
+		// 	contig.Name(),
+		// 	contigType,
+		// 	contig.Annotation.Offset,
+		// 	contig.Annotation.Offset+contig.Len(),
+		// 	1-math.Min(math.Min(distanceA, distanceB), distanceC),
+		// )
 		results <- buffer.String()
 	}
 }
